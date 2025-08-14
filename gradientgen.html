@@ -143,6 +143,12 @@
       <span class="value-display" id="animSpeedVal">0.5</span>
       <span>Speed</span>
     </div>
+    <label>Export</label>
+    <div class="control-row">
+      <button id="exportShaderBtn">Export Shader</button>
+      <button id="exportPngBtn">Export PNG</button>
+      <button id="exportGifBtn">Export GIF</button>
+      div>
   </div>
   
   <div class="control-group">
@@ -191,6 +197,7 @@
   </div>
 </div>
 
+<script src="./gif.js"></script>
 <script id="fragShader" type="x-shader/x-fragment">
 precision highp float;
 
@@ -325,11 +332,12 @@ void main() {
 <script>
 const glcanvas = document.getElementById('glcanvas');
 const minimap = document.getElementById('minimap');
-const gl = glcanvas.getContext('webgl');
+const gl = glcanvas.getContext('webgl', { preserveDrawingBuffer: true });
 glcanvas.width = window.innerWidth;
 glcanvas.height = window.innerHeight;
 
 function compileShader(type, src) {
+    console.log(`Compiling ${type === gl.VERTEX_SHADER ? 'vertex' : 'fragment'} shader...`);
     const s = gl.createShader(type);
     gl.shaderSource(s, src);
     gl.compileShader(s);
@@ -394,6 +402,102 @@ const intensityVal = document.getElementById('intensityVal');
 const blendModeSelect = document.getElementById('blendMode');
 const addBlobBtn = document.getElementById('addBlobBtn');
 const blobsList = document.getElementById('blobsList');
+
+
+document.getElementById('exportShaderBtn').addEventListener('click', () => {
+    const shaderCode = document.getElementById('fragShader').textContent;
+    const blob = new Blob([shaderCode], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'shader.frag';
+    a.click();
+    URL.revokeObjectURL(url);
+});
+
+document.getElementById('exportPngBtn').addEventListener('click', () => {
+    gl.finish(); 
+    const link = document.createElement('a');
+    link.download = 'gradient.png';
+    link.href = glcanvas.toDataURL('image/png');
+    link.click();
+});
+
+document.getElementById('exportGifBtn').addEventListener('click', () => {
+    const gif = new GIF({
+        workers: 2,
+        quality: 10,
+        width: glcanvas.width,
+        height: glcanvas.height,
+        workerScript: './gif.worker.js'
+    });
+
+    const totalFrames = 60;
+    const loopDuration = 4.0;
+    const baseFlow = parseFloat(flowStrengthSlider.value);
+    const baseNoise = parseFloat(noiseStrengthSlider.value);
+    const baseIntensity = parseFloat(intensitySlider.value);
+    const blendMode = parseInt(blendModeSelect.value);
+
+    for (let frame = 0; frame < totalFrames; frame++) {
+        const tNorm = frame / totalFrames;
+        const loopTime = tNorm * loopDuration;
+
+        gl.viewport(0, 0, glcanvas.width, glcanvas.height);
+        gl.uniform2f(uniforms.resolution, glcanvas.width, glcanvas.height);
+        gl.uniform1f(uniforms.time, loopTime);
+        gl.uniform1f(uniforms.flowStrength, baseFlow);
+        gl.uniform1f(uniforms.noiseStrength, baseNoise);
+        gl.uniform1f(uniforms.intensity, baseIntensity);
+        gl.uniform1i(uniforms.blendMode, blendMode);
+        gl.uniform1i(uniforms.blobCount, blobs.length);
+
+        const positions = [];
+        const colors = [];
+        const radii = [];
+        const intensities = [];
+        const pulseStrengths = [];
+
+        blobs.forEach(blob => {
+            positions.push(blob.x, blob.y);
+            const rgb = hexToRgb(blob.color);
+            colors.push(rgb[0], rgb[1], rgb[2]);
+            radii.push(blob.radius);
+            intensities.push(blob.intensity);
+            pulseStrengths.push(blob.pulseStrength);
+        });
+
+        while (positions.length < 16) positions.push(0);
+        while (colors.length < 24) colors.push(0);
+        while (radii.length < 8) radii.push(0);
+        while (intensities.length < 8) intensities.push(0);
+        while (pulseStrengths.length < 8) pulseStrengths.push(0);
+
+        gl.uniform2fv(uniforms.blobPositions, positions);
+        gl.uniform3fv(uniforms.blobColors, colors);
+        gl.uniform1fv(uniforms.blobRadii, radii);
+        gl.uniform1fv(uniforms.blobIntensities, intensities);
+        gl.uniform1fv(uniforms.blobPulseStrengths, pulseStrengths);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+        gif.addFrame(glcanvas, { delay: (loopDuration * 1000) / totalFrames, copy: true });
+    }
+
+    gif.on('finished', blob => {
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'shader.gif';
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+
+    gif.render();
+});
+
 
 function hexToRgb(hex) {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
